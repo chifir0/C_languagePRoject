@@ -1,0 +1,288 @@
+#define _CRT_SECURE_NO_WARNINGS
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#define MAX_ITERATIONS 10000
+#define TOLERANCE 1e-10
+
+typedef struct {
+    int rows;
+    int cols;
+    double** data;
+} Matrix;
+
+Matrix* create_matrix(int rows, int cols) {
+    Matrix* m = malloc(sizeof(Matrix));
+    if (!m) return NULL;
+
+    m->rows = rows;
+    m->cols = cols;
+    m->data = malloc(rows * sizeof(double*));
+    if (!m->data) {
+        free(m);
+        return NULL;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        m->data[i] = calloc(cols, sizeof(double));
+        if (!m->data[i]) {
+            for (int j = 0; j < i; j++) {
+                free(m->data[j]);
+            }
+            free(m->data);
+            free(m);
+            return NULL;
+        }
+    }
+    return m;
+}
+
+void free_matrix(Matrix* m) {
+    if (m) {
+        for (int i = 0; i < m->rows; i++) {
+            free(m->data[i]);
+        }
+        free(m->data);
+        free(m);
+    }
+}
+
+void print_matrix(Matrix* m) {
+    for (int i = 0; i < m->rows; i++) {
+        for (int j = 0; j < m->cols; j++) {
+            printf("%10.5f ", m->data[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+int is_symmetric(Matrix* A) {
+    if (A->rows != A->cols) return 0;
+    for (int i = 0; i < A->rows; i++) {
+        for (int j = 0; j < A->cols; j++) {
+            if (fabs(A->data[i][j] - A->data[j][i]) > TOLERANCE) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+void jacobi_eig(Matrix* A, double eigenvals[], Matrix* eigenvecs) {
+    int n = A->rows;
+    Matrix* U = create_matrix(n, n);
+    if (!U) return;
+
+    for (int i = 0; i < n; i++) U->data[i][i] = 1.0;
+
+    for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+        int p = 0, q = 1;
+        double max_val = 0.0;
+        for (int i = 0; i < n; i++) {
+            for (int j = i + 1; j < n; j++) {
+                if (fabs(A->data[i][j]) > max_val) {
+                    max_val = fabs(A->data[i][j]);
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+
+        if (max_val < TOLERANCE) break;
+
+        double theta = 0.5 * atan2(2 * A->data[p][q], A->data[p][p] - A->data[q][q]);
+        double c = cos(theta);
+        double s = sin(theta);
+
+        // A = P^TAP
+        double App = A->data[p][p], Aqq = A->data[q][q], Apq = A->data[p][q];
+        A->data[p][p] = c * c * App - 2 * s * c * Apq + s * s * Aqq;
+        A->data[q][q] = s * s * App + 2 * s * c * Apq + c * c * Aqq;
+        A->data[p][q] = 0.0;
+        A->data[q][p] = 0.0;
+
+        for (int r = 0; r < n; r++) {
+            if (r == p || r == q) continue;
+            double temp_pr = c * A->data[r][p] - s * A->data[r][q];
+            double temp_qr = s * A->data[r][p] + c * A->data[r][q];
+            A->data[r][p] = temp_pr;
+            A->data[p][r] = temp_pr;
+            A->data[r][q] = temp_qr;
+            A->data[q][r] = temp_qr;
+        }
+
+        // Обновляем U (U = U * P)
+        for (int r = 0; r < n; r++) {
+            double temp_rp = c * U->data[r][p] - s * U->data[r][q];
+            double temp_rq = s * U->data[r][p] + c * U->data[r][q];
+            U->data[r][p] = temp_rp;
+            U->data[r][q] = temp_rq;
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        eigenvals[i] = A->data[i][i];
+        for (int j = 0; j < n; j++) {
+            eigenvecs->data[i][j] = U->data[i][j];
+        }
+    }
+
+    free_matrix(U);
+}
+
+void numerical_solve(Matrix* A, double* y, int n, double t_start, double t_end, double dt) {
+    int steps = (int)((t_end - t_start) / dt);
+    double* k = malloc(n * sizeof(double));
+    if (!k) {
+        fprintf(stderr, "Memory error\n");
+        return;
+    }
+
+    printf(" t\t");
+    for (int i = 0; i < n; i++) {
+        printf("x[%d]\t\t", i);
+    }
+    printf("\n");
+
+    for (int step = 0; step <= steps; step++) {
+        printf("%.3f\t", t_start);
+        for (int i = 0; i < n; i++) {
+            printf("%.5f\t", y[i]);
+        }
+        printf("\n");
+
+        // k = A * y
+        for (int i = 0; i < n; i++) {
+            k[i] = 0.0;
+            for (int j = 0; j < n; j++) {
+                k[i] += A->data[i][j] * y[j];
+            }
+        }
+
+        // y = y + dt * k
+        for (int i = 0; i < n; i++) {
+            y[i] += dt * k[i];
+        }
+
+        t_start += dt;
+    }
+
+    free(k);
+}
+
+int main() {
+
+    printf("Solving a system of differential equations by the Jacobi method\n dx/dt = Ax\n");
+
+    int n;
+    printf("Enter matrix A size (n x n): ");
+    scanf_s("%d", &n);
+
+    if (n <= 0) {
+        fprintf(stderr, "Must be > 0\n");
+        return 1;
+    }
+
+    Matrix* A = create_matrix(n, n);
+    if (!A) {
+        fprintf(stderr, "Memor\n");
+        return 1;
+    }
+
+    printf("Enter martix elements %dx%d:\n", n, n);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("A[%d][%d]: ", i, j);
+            scanf_s("%lf", &A->data[i][j]);
+        }
+    }
+
+    printf("\nEntered matrix A:\n");
+    print_matrix(A);
+
+    if (!is_symmetric(A)) {
+        printf("\nThe matrix is ​​not symmetric. An analytical solution (Jacobi's method) is impossible\n");
+    }
+    else {
+        printf("\n*** analytical solution (Jacobi's method) ***\n");
+
+        double* eigenvals = malloc(n * sizeof(double));
+        if (!eigenvals) {
+            fprintf(stderr, "Memory error\n");
+            free_matrix(A);
+            return 1;
+        }
+
+        Matrix* eigenvecs = create_matrix(n, n);
+        if (!eigenvecs) {
+            fprintf(stderr, "memory error\n");
+            free(eigenvals);
+            free_matrix(A);
+            return 1;
+        }
+
+        jacobi_eig(A, eigenvals, eigenvecs);
+
+        printf("eigenvalues:\n");
+        for (int i = 0; i < n; i++) {
+            printf("lambda[%d] = %.5f\n", i, eigenvals[i]);
+        }
+
+        printf("\neigenvectors (columns):\n");
+        for (int j = 0; j < n; j++) {
+            printf("v[%d] = [", j);
+            for (int i = 0; i < n; i++) {
+                printf("%.5f", eigenvecs->data[i][j]);
+                if (i < n - 1) printf(", ");
+            }
+            printf("]^T\n");
+        }
+
+        printf("\n--- FORM OF THE GENERAL SOLUTION WITH SUBSTITUTED VALUES ---\n");
+        printf("x(t) = c1 * [");
+        for (int i = 0; i < n; i++) {
+            printf("%.5f", eigenvecs->data[i][0]);
+            if (i < n - 1) printf(", ");
+        }
+        printf("]^T * exp(%.5f*t)", eigenvals[0]);
+
+        for (int j = 1; j < n; j++) {
+            printf(" + c%d * [", j + 1);
+            for (int i = 0; i < n; i++) {
+                printf("%.5f", eigenvecs->data[i][j]);
+                if (i < n - 1) printf(", ");
+            }
+            printf("]^T * exp(%.5f*t)", eigenvals[j]);
+        }
+        printf("\n");
+
+        free(eigenvals);
+        free_matrix(eigenvecs);
+    }
+
+    printf("\n*** NUMERICAL SOLUTION (Euler's method) ***\n");
+
+    double* y = malloc(n * sizeof(double));
+    if (!y) {
+        fprintf(stderr, "Memory error\n");
+        free_matrix(A);
+        return 1;
+    }
+
+    printf("enter initial conditions (x1(0), x2(0), ..., xn(0)):\n");
+    for (int i = 0; i < n; i++) {
+        printf("x[%d](0): ", i);
+        scanf_s("%lf", &y[i]);
+    }
+
+    double t_start = 0.0, t_end = 2.0, dt = 0.1;
+    printf("\nNumerical solution on [%.2f, %.2f] with step of %.3f:\n", t_start, t_end, dt);
+    numerical_solve(A, y, n, t_start, t_end, dt);
+
+    free(y);
+    free_matrix(A);
+
+    return 0;
+}
