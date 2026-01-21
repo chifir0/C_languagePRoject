@@ -1,5 +1,4 @@
 #define _CRT_SECURE_NO_WARNINGS
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -58,78 +57,169 @@ void print_matrix(Matrix* m) {
     }
 }
 
-int is_symmetric(Matrix* A) {
-    if (A->rows != A->cols) return 0;
+Matrix* copy_matrix(Matrix* src) {
+    Matrix* dst = create_matrix(src->rows, src->cols);
+    for (int i = 0; i < src->rows; i++) {
+        for (int j = 0; j < src->cols; j++) {
+            dst->data[i][j] = src->data[i][j];
+        }
+    }
+    return dst;
+}
+
+Matrix* multiply_matrices(Matrix* A, Matrix* B) {
+    if (A->cols != B->rows) return NULL;
+
+    Matrix* C = create_matrix(A->rows, B->cols);
     for (int i = 0; i < A->rows; i++) {
-        for (int j = 0; j < A->cols; j++) {
-            if (fabs(A->data[i][j] - A->data[j][i]) > TOLERANCE) {
-                return 0;
+        for (int j = 0; j < B->cols; j++) {
+            C->data[i][j] = 0.0;
+            for (int k = 0; k < A->cols; k++) {
+                C->data[i][j] += A->data[i][k] * B->data[k][j];
             }
         }
     }
-    return 1;
+    return C;
 }
 
-void jacobi_eig(Matrix* A, double eigenvals[], Matrix* eigenvecs) {
+// qr-разложение методом отражений хаусхолдера
+void qr_decomposition_householder(Matrix* A, Matrix* Q_out, Matrix* R_out) {
     int n = A->rows;
-    Matrix* U = create_matrix(n, n);
-    if (!U) return;
+    Matrix* Q_total = create_matrix(n, n);
+    Matrix* A_current = copy_matrix(A);
 
-    for (int i = 0; i < n; i++) U->data[i][i] = 1.0;
+    for (int i = 0; i < n; i++) Q_total->data[i][i] = 1.0;
 
-    for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
-        int p = 0, q = 1;
-        double max_val = 0.0;
-        for (int i = 0; i < n; i++) {
-            for (int j = i + 1; j < n; j++) {
-                if (fabs(A->data[i][j]) > max_val) {
-                    max_val = fabs(A->data[i][j]);
-                    p = i;
-                    q = j;
-                }
+    for (int k = 0; k < n - 1; k++) {
+        // вектор x нижняя часть k-го столбца
+        double norm_x = 0.0;
+        for (int i = k; i < n; i++) {
+            norm_x += A_current->data[i][k] * A_current->data[i][k];
+        }
+        norm_x = sqrt(norm_x);
+
+        if (norm_x == 0.0) continue;
+
+        double alpha = (A_current->data[k][k] >= 0) ? -norm_x : norm_x;
+
+        // вектор v
+        double* v = calloc(n, sizeof(double));
+        v[k] = A_current->data[k][k] - alpha;
+        for (int i = k + 1; i < n; i++) {
+            v[i] = A_current->data[i][k];
+        }
+
+        double norm_v = 0.0;
+        for (int i = k; i < n; i++) {
+            norm_v += v[i] * v[i];
+        }
+        norm_v = sqrt(norm_v);
+        if (norm_v != 0.0) {
+            for (int i = k; i < n; i++) {
+                v[i] /= norm_v;
             }
         }
 
-        if (max_val < TOLERANCE) break;
-
-        double theta = 0.5 * atan2(2 * A->data[p][q], A->data[p][p] - A->data[q][q]);
-        double c = cos(theta);
-        double s = sin(theta);
-
-        // A = P^TAP
-        double App = A->data[p][p], Aqq = A->data[q][q], Apq = A->data[p][q];
-        A->data[p][p] = c * c * App - 2 * s * c * Apq + s * s * Aqq;
-        A->data[q][q] = s * s * App + 2 * s * c * Apq + c * c * Aqq;
-        A->data[p][q] = 0.0;
-        A->data[q][p] = 0.0;
-
-        for (int r = 0; r < n; r++) {
-            if (r == p || r == q) continue;
-            double temp_pr = c * A->data[r][p] - s * A->data[r][q];
-            double temp_qr = s * A->data[r][p] + c * A->data[r][q];
-            A->data[r][p] = temp_pr;
-            A->data[p][r] = temp_pr;
-            A->data[r][q] = temp_qr;
-            A->data[q][r] = temp_qr;
+        // матрица отражения H = I - 2*v*v^T
+        Matrix* H = create_matrix(n, n);
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                H->data[i][j] = (i == j) ? 1.0 : 0.0;
+                H->data[i][j] -= 2.0 * v[i] * v[j];
+            }
         }
 
-        // Обновляем U (U = U * P)
-        for (int r = 0; r < n; r++) {
-            double temp_rp = c * U->data[r][p] - s * U->data[r][q];
-            double temp_rq = s * U->data[r][p] + c * U->data[r][q];
-            U->data[r][p] = temp_rp;
-            U->data[r][q] = temp_rq;
+        Matrix* A_new = multiply_matrices(H, A_current);
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                A_current->data[i][j] = A_new->data[i][j];
+            }
+        }
+
+        Matrix* Q_updated = multiply_matrices(Q_total, H);
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                Q_total->data[i][j] = Q_updated->data[i][j];
+            }
+        }
+
+        free_matrix(H);
+        free_matrix(A_new);
+        free_matrix(Q_updated);
+        free(v);
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (j < i) R_out->data[i][j] = 0.0;
+            else R_out->data[i][j] = A_current->data[i][j];
         }
     }
 
     for (int i = 0; i < n; i++) {
-        eigenvals[i] = A->data[i][i];
         for (int j = 0; j < n; j++) {
-            eigenvecs->data[i][j] = U->data[i][j];
+            Q_out->data[i][j] = Q_total->data[i][j];
         }
     }
 
-    free_matrix(U);
+    free_matrix(A_current);
+    free_matrix(Q_total);
+}
+
+void qr_algorithm(Matrix* A, double eigenvals[], Matrix* eigenvecs) {
+    int n = A->rows;
+    Matrix* Ak = copy_matrix(A);
+    Matrix* Q_total = create_matrix(n, n);
+    for (int i = 0; i < n; i++) Q_total->data[i][i] = 1.0;
+
+    for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+        Matrix* Qk = create_matrix(n, n);
+        Matrix* Rk = create_matrix(n, n);
+
+        qr_decomposition_householder(Ak, Qk, Rk);
+
+        // A_{k+1} = Rk * Qk
+        Matrix* Ak_new = multiply_matrices(Rk, Qk);
+
+        // Q_total = Q_total * Qk
+        Matrix* Q_mult = multiply_matrices(Q_total, Qk);
+
+        double diff = 0.0;
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                diff += fabs(Ak_new->data[i][j] - Ak->data[i][j]);
+            }
+        }
+
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                Ak->data[i][j] = Ak_new->data[i][j];
+                Q_total->data[i][j] = Q_mult->data[i][j];
+            }
+        }
+
+        if (diff < TOLERANCE) {
+            break;
+        }
+
+        free_matrix(Qk);
+        free_matrix(Rk);
+        free_matrix(Ak_new);
+        free_matrix(Q_mult);
+    }
+
+    for (int i = 0; i < n; i++) {
+        eigenvals[i] = Ak->data[i][i];
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            eigenvecs->data[i][j] = Q_total->data[i][j];
+        }
+    }
+
+    free_matrix(Ak);
+    free_matrix(Q_total);
 }
 
 void numerical_solve(Matrix* A, double* y, int n, double t_start, double t_end, double dt) {
@@ -173,25 +263,25 @@ void numerical_solve(Matrix* A, double* y, int n, double t_start, double t_end, 
 }
 
 int main() {
-
-    printf("Solving a system of differential equations by the Jacobi method\n dx/dt = Ax\n");
+    printf("Solving a system of differential equations using the QR algorithm\n");
+    printf("dx/dt = Ax\n");
 
     int n;
     printf("Enter matrix A size (n x n): ");
     scanf_s("%d", &n);
 
     if (n <= 0) {
-        fprintf(stderr, "Must be > 0\n");
+        fprintf(stderr, "Size must be > 0\n");
         return 1;
     }
 
     Matrix* A = create_matrix(n, n);
     if (!A) {
-        fprintf(stderr, "Memor\n");
+        fprintf(stderr, "Memory allocation failed for matrix A.\n");
         return 1;
     }
 
-    printf("Enter martix elements %dx%d:\n", n, n);
+    printf("Enter matrix elements %dx%d:\n", n, n);
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
             printf("A[%d][%d]: ", i, j);
@@ -202,76 +292,71 @@ int main() {
     printf("\nEntered matrix A:\n");
     print_matrix(A);
 
-    if (!is_symmetric(A)) {
-        printf("\nThe matrix is ​​not symmetric. An analytical solution (Jacobi's method) is impossible\n");
+    printf("\n--- ANALYTICAL SOLUTION (QR Algorithm) ---\n");
+
+    double* eigenvals = malloc(n * sizeof(double));
+    if (!eigenvals) {
+        fprintf(stderr, "Memory error for eigenvals\n");
+        free_matrix(A);
+        return 1;
     }
-    else {
-        printf("\n*** analytical solution (Jacobi's method) ***\n");
 
-        double* eigenvals = malloc(n * sizeof(double));
-        if (!eigenvals) {
-            fprintf(stderr, "Memory error\n");
-            free_matrix(A);
-            return 1;
-        }
+    Matrix* eigenvecs = create_matrix(n, n);
+    if (!eigenvecs) {
+        fprintf(stderr, "Memory error for eigenvecs\n");
+        free(eigenvals);
+        free_matrix(A);
+        return 1;
+    }
 
-        Matrix* eigenvecs = create_matrix(n, n);
-        if (!eigenvecs) {
-            fprintf(stderr, "memory error\n");
-            free(eigenvals);
-            free_matrix(A);
-            return 1;
-        }
+    qr_algorithm(A, eigenvals, eigenvecs);
 
-        jacobi_eig(A, eigenvals, eigenvecs);
+    printf("Eigenvalues:\n");
+    for (int i = 0; i < n; i++) {
+        printf("lambda[%d] = %.5f\n", i, eigenvals[i]);
+    }
 
-        printf("eigenvalues:\n");
+    printf("\nEigenvectors (columns):\n");
+    for (int j = 0; j < n; j++) {
+        printf("v[%d] = [", j);
         for (int i = 0; i < n; i++) {
-            printf("lambda[%d] = %.5f\n", i, eigenvals[i]);
-        }
-
-        printf("\neigenvectors (columns):\n");
-        for (int j = 0; j < n; j++) {
-            printf("v[%d] = [", j);
-            for (int i = 0; i < n; i++) {
-                printf("%.5f", eigenvecs->data[i][j]);
-                if (i < n - 1) printf(", ");
-            }
-            printf("]^T\n");
-        }
-
-        printf("\n--- FORM OF THE GENERAL SOLUTION WITH SUBSTITUTED VALUES ---\n");
-        printf("x(t) = c1 * [");
-        for (int i = 0; i < n; i++) {
-            printf("%.5f", eigenvecs->data[i][0]);
+            printf("%.5f", eigenvecs->data[i][j]);
             if (i < n - 1) printf(", ");
         }
-        printf("]^T * exp(%.5f*t)", eigenvals[0]);
-
-        for (int j = 1; j < n; j++) {
-            printf(" + c%d * [", j + 1);
-            for (int i = 0; i < n; i++) {
-                printf("%.5f", eigenvecs->data[i][j]);
-                if (i < n - 1) printf(", ");
-            }
-            printf("]^T * exp(%.5f*t)", eigenvals[j]);
-        }
-        printf("\n");
-
-        free(eigenvals);
-        free_matrix(eigenvecs);
+        printf("]^T\n");
     }
+
+    printf("\n--- FORM OF THE GENERAL SOLUTION WITH SUBSTITUTED VALUES ---\n");
+    printf("x(t) = c1 * [");
+    for (int i = 0; i < n; i++) {
+        printf("%.5f", eigenvecs->data[i][0]);
+        if (i < n - 1) printf(", ");
+    }
+    printf("]^T * exp(%.5f*t)", eigenvals[0]);
+
+    for (int j = 1; j < n; j++) {
+        printf(" + c%d * [", j + 1);
+        for (int i = 0; i < n; i++) {
+            printf("%.5f", eigenvecs->data[i][j]);
+            if (i < n - 1) printf(", ");
+        }
+        printf("]^T * exp(%.5f*t)", eigenvals[j]);
+    }
+    printf("\n");
+
+    free(eigenvals);
+    free_matrix(eigenvecs);
 
     printf("\n*** NUMERICAL SOLUTION (Euler's method) ***\n");
 
     double* y = malloc(n * sizeof(double));
     if (!y) {
-        fprintf(stderr, "Memory error\n");
+        fprintf(stderr, "Memory error for y\n");
         free_matrix(A);
         return 1;
     }
 
-    printf("enter initial conditions (x1(0), x2(0), ..., xn(0)):\n");
+    printf("Enter initial conditions (x1(0), x2(0), ..., xn(0)):\n");
     for (int i = 0; i < n; i++) {
         printf("x[%d](0): ", i);
         scanf_s("%lf", &y[i]);
